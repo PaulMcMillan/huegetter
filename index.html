@@ -138,18 +138,12 @@
                 <input id="photo-input" type="file" accept="image/*" multiple />
               </div>
             </div>
-            <div class="detected">
+            <div class="serial-entry">
               <label>
-                Detected serial
-                <input id="detected-serial" type="text" readonly />
+                Serial
+                <input id="serial-input" type="text" placeholder="06E49F" />
               </label>
-            </div>
-            <div class="manual">
-              <label>
-                Manual serial override
-                <input id="manual-serial" type="text" placeholder="06E49F" />
-              </label>
-              <button id="send-manual" class="ghost" type="button">Send reset</button>
+              <button id="send-serial" class="ghost" type="button">Send reset</button>
             </div>
             <div class="telemetry">
               <div>

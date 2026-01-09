@@ -40,9 +40,8 @@ const els = {
   photoBtn: document.getElementById("photo-btn"),
   photoInput: document.getElementById("photo-input"),
   dropZone: document.getElementById("drop-zone"),
-  detectedSerial: document.getElementById("detected-serial"),
-  manualSerial: document.getElementById("manual-serial"),
-  sendManualBtn: document.getElementById("send-manual"),
+  serialInput: document.getElementById("serial-input"),
+  sendSerialBtn: document.getElementById("send-serial"),
   qrText: document.getElementById("qr-text"),
   log: document.getElementById("log"),
 };
@@ -291,7 +290,9 @@ function handleSerial(serial, source) {
     return;
   }
 
-  els.detectedSerial.value = normalized;
+  if (els.serialInput) {
+    els.serialInput.value = normalized;
+  }
   if (!canSendSerial(normalized)) {
     return;
   }
@@ -408,7 +409,7 @@ function stopScan() {
 }
 
 async function handleManualSend() {
-  const serial = normalizeSerial(els.manualSerial.value.trim());
+  const serial = normalizeSerial(els.serialInput.value.trim());
   if (!serial) {
     logLine("Enter a 6-character serial (hex).", "warn");
     return;
@@ -872,7 +873,13 @@ function init() {
       await handlePhotoFiles(files);
     }
   });
-  els.sendManualBtn.addEventListener("click", () => handleManualSend());
+  els.sendSerialBtn.addEventListener("click", () => handleManualSend());
+  els.serialInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      handleManualSend();
+    }
+  });
 
   [
     els.mqttUrl,

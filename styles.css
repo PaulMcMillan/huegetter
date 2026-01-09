@@ -372,6 +372,11 @@ video {
   gap: 12px;
 }
 
+.serial-entry {
+  display: grid;
+  gap: 10px;
+}
+
 .telemetry {
   display: grid;
   gap: 10px;
