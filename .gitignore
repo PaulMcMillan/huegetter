@@ -1,0 +1,10 @@
+# Local artifacts
+http.log
+*.log
+PXL_*.jpg
+
+# OS
+.DS_Store
+
+# Node
+node_modules/

@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Hue Secure Reset</title>
+    <link rel="stylesheet" href="styles.css" />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Spline+Sans+Mono:wght@400;600&display=swap"
+    />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">Hue Secure Reset</p>
+          <h1>Factory-reset Hue bulbs by scanning the label.</h1>
+          <p class="lede">
+            This tool reads the QR, derives the printed serial number, and sends
+            the Zigbee2MQTT reset action over WebSocket MQTT.
+          </p>
+        </div>
+        <div class="hero-card">
+          <div class="hero-badge">Quick checklist</div>
+          <ul>
+            <li>WebSocket MQTT listener enabled on Mosquitto</li>
+            <li>Zigbee2MQTT base topic set (default: zigbee2mqtt)</li>
+            <li>Camera access allowed in this browser</li>
+          </ul>
+        </div>
+      </header>
+
+      <section class="panel">
+        <div class="panel-header">
+          <span class="step">1</span>
+          <h2>Connect MQTT</h2>
+        </div>
+        <form id="mqtt-form" class="form-grid">
+          <label>
+            WebSocket URL
+            <input
+              id="mqtt-url"
+              type="url"
+              placeholder="ws://localhost:9001"
+              autocomplete="off"
+              required
+            />
+            <span class="hint">Mosquitto does not enable WebSockets by default; configure a WebSocket listener and use that URL here.</span>
+          </label>
+
+          <label>
+            Username
+            <input id="mqtt-username" type="text" autocomplete="username" />
+          </label>
+
+          <label>
+            Password
+            <input id="mqtt-password" type="password" autocomplete="current-password" />
+          </label>
+
+          <label>
+            Base topic
+            <input id="base-topic" type="text" placeholder="zigbee2mqtt" />
+          </label>
+
+          <label class="checkbox">
+            <input id="subscribe-responses" type="checkbox" checked />
+            Subscribe to action responses
+          </label>
+          <label class="checkbox">
+            <input id="auto-connect" type="checkbox" checked />
+            Auto-connect on load
+          </label>
+
+          <label>
+            Client ID
+            <input id="client-id" type="text" placeholder="hue-reset-xxxx" />
+          </label>
+
+          <label>
+            Extended PAN ID (optional)
+            <input id="extended-pan-id" type="text" placeholder="0x00124b0001abcdff" />
+          </label>
+
+          <div class="form-actions">
+            <button type="button" id="connect-btn" class="primary">Connect</button>
+            <button type="button" id="disconnect-btn" class="ghost">Disconnect</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel" id="scan-section">
+        <div class="panel-header">
+          <span class="step">2</span>
+          <h2>Scan &amp; reset</h2>
+        </div>
+
+        <div class="scan-grid">
+          <div class="camera">
+            <video id="video" autoplay playsinline muted></video>
+            <div class="camera-status" id="camera-status" data-state="idle">Idle</div>
+          </div>
+
+          <div class="scan-controls">
+            <div class="control-row">
+              <button id="start-scan" class="primary" type="button">Start camera</button>
+              <button id="stop-scan" class="ghost" type="button">Stop</button>
+            </div>
+            <div class="camera-options">
+              <label>
+                Camera
+                <select id="camera-select"></select>
+              </label>
+              <label class="range">
+                Zoom
+                <input id="zoom-slider" type="range" min="1" max="1" step="0.1" value="1" disabled />
+                <span id="zoom-value" class="mono">1.0×</span>
+              </label>
+              <button id="torch-btn" class="ghost" type="button" disabled>Toggle torch</button>
+              <div class="drop-zone" id="drop-zone">
+                <div class="drop-inner">
+                  <button id="photo-btn" class="ghost" type="button">Scan from photo</button>
+                  <p class="hint">or drop images here / paste from clipboard</p>
+                </div>
+                <input id="photo-input" type="file" accept="image/*" multiple />
+              </div>
+            </div>
+            <div class="detected">
+              <label>
+                Detected serial
+                <input id="detected-serial" type="text" readonly />
+              </label>
+            </div>
+            <div class="manual">
+              <label>
+                Manual serial override
+                <input id="manual-serial" type="text" placeholder="06E49F" />
+              </label>
+              <button id="send-manual" class="ghost" type="button">Send reset</button>
+            </div>
+            <div class="telemetry">
+              <div>
+                <p class="label">QR payload</p>
+                <p class="mono" id="qr-text">—</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel log-panel">
+        <div class="panel-header">
+          <span class="step">3</span>
+          <h2>Activity log</h2>
+        </div>
+        <div id="log" class="log"></div>
+      </section>
+
+      <footer class="footer">
+        <p>
+          Auto-reset triggers as soon as a serial is derived from the QR’s Z
+          field. Works on HTTPS or localhost only.
+        </p>
+      </footer>
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
