@@ -22,11 +22,11 @@
           </p>
         </div>
         <div class="hero-card">
-          <div class="hero-badge">Quick checklist</div>
+          <div class="hero-badge">How it works</div>
           <ul>
-            <li>WebSocket MQTT listener enabled on Mosquitto</li>
-            <li>Zigbee2MQTT base topic set (default: zigbee2mqtt)</li>
-            <li>Camera access allowed in this browser</li>
+            <li>Client‑only: data stays in your browser (no server upload)</li>
+            <li>Scan Hue QR, derive the printed serial, send reset over MQTT</li>
+            <li>Supports camera, photo upload, drag‑drop, and clipboard paste</li>
           </ul>
         </div>
       </header>
@@ -37,7 +37,7 @@
           <h2>Connect MQTT</h2>
         </div>
         <form id="mqtt-form" class="form-grid">
-          <label>
+          <label class="field-url">
             WebSocket URL
             <input
               id="mqtt-url"
@@ -46,44 +46,56 @@
               autocomplete="off"
               required
             />
-            <span class="hint">Mosquitto does not enable WebSockets by default; configure a WebSocket listener and use that URL here.</span>
+            <span class="hint">
+              Mosquitto doesn’t enable WebSockets by default. See
+              <span class="mono-inline config-hint">protocol websockets
+                <span class="config-pop">
+                  <span class="config-code">listener 9001</span>
+                  <span class="config-code">protocol websockets</span>
+                  <span class="config-code">allow_anonymous true</span>
+                </span>
+              </span>
+              in
+              <a
+                href="https://mosquitto.org/man/mosquitto-conf-5.html"
+                target="_blank"
+                rel="noreferrer"
+                >mosquitto.conf</a
+              >.
+            </span>
           </label>
 
-          <label>
+          <label class="field-user">
             Username
             <input id="mqtt-username" type="text" autocomplete="username" />
           </label>
 
-          <label>
+          <label class="field-pass">
             Password
             <input id="mqtt-password" type="password" autocomplete="current-password" />
           </label>
 
-          <label>
+          <label class="field-base">
             Base topic
             <input id="base-topic" type="text" placeholder="zigbee2mqtt" />
           </label>
 
-          <label class="checkbox">
-            <input id="subscribe-responses" type="checkbox" checked />
-            Subscribe to action responses
-          </label>
-          <label class="checkbox">
-            <input id="auto-connect" type="checkbox" checked />
-            Auto-connect on load
-          </label>
-
-          <label>
+          <label class="field-client">
             Client ID
             <input id="client-id" type="text" placeholder="hue-reset-xxxx" />
           </label>
 
-          <label>
+          <label class="hover-note field-pan">
             Extended PAN ID (optional)
             <input id="extended-pan-id" type="text" placeholder="0x00124b0001abcdff" />
+            <span class="hover-pop">Leave blank to use the network’s default.</span>
           </label>
 
           <div class="form-actions">
+            <label class="checkbox">
+              <input id="auto-connect" type="checkbox" checked />
+              Auto-connect on load
+            </label>
             <button type="button" id="connect-btn" class="primary">Connect</button>
             <button type="button" id="disconnect-btn" class="ghost">Disconnect</button>
           </div>
@@ -159,6 +171,8 @@
 
       <footer class="footer">
         <p>
+          Everything runs locally in your browser. Nothing you enter is sent to
+          a server—only the MQTT message goes to the broker you specify.
           Auto-reset triggers as soon as a serial is derived from the QR’s Z
           field. Works on HTTPS or localhost only.
         </p>

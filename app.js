@@ -12,7 +12,6 @@ const DEFAULTS = {
   username: "",
   password: "",
   baseTopic: "zigbee2mqtt",
-  subscribeResponses: true,
   autoConnect: true,
   clientId: "",
   extendedPanId: "",
@@ -24,7 +23,6 @@ const els = {
   mqttUser: document.getElementById("mqtt-username"),
   mqttPass: document.getElementById("mqtt-password"),
   baseTopic: document.getElementById("base-topic"),
-  subscribeResponses: document.getElementById("subscribe-responses"),
   autoConnect: document.getElementById("auto-connect"),
   clientId: document.getElementById("client-id"),
   extendedPanId: document.getElementById("extended-pan-id"),
@@ -67,6 +65,7 @@ const state = {
   zoomMode: "virtual",
   virtualZoom: 1,
   autoCamera: true,
+  hasStoredMqttUrl: false,
 };
 
 function logLine(message, level = "info") {
@@ -113,7 +112,6 @@ function saveSettings() {
     username: els.mqttUser.value,
     password: els.mqttPass.value,
     baseTopic: els.baseTopic.value.trim(),
-    subscribeResponses: els.subscribeResponses.checked,
     autoConnect: els.autoConnect.checked,
     extendedPanId: els.extendedPanId.value.trim(),
   };
@@ -128,12 +126,11 @@ function loadSettings() {
     stored = {};
   }
   const clientId = `hue-reset-${Math.random().toString(16).slice(2, 10)}`;
+  state.hasStoredMqttUrl = !!stored.mqttUrl?.trim();
   els.mqttUrl.value = stored.mqttUrl || DEFAULTS.mqttUrl;
   els.mqttUser.value = stored.username ?? DEFAULTS.username;
   els.mqttPass.value = stored.password ?? DEFAULTS.password;
   els.baseTopic.value = stored.baseTopic || DEFAULTS.baseTopic;
-  els.subscribeResponses.checked =
-    stored.subscribeResponses ?? DEFAULTS.subscribeResponses;
   els.autoConnect.checked = stored.autoConnect ?? DEFAULTS.autoConnect;
   els.clientId.value = clientId;
   els.extendedPanId.value = stored.extendedPanId ?? DEFAULTS.extendedPanId;
@@ -143,7 +140,7 @@ function isWebSocketUrl(url) {
   return /^wss?:\/\//i.test(url);
 }
 
-function connectMqtt() {
+function connectMqtt({ auto = false } = {}) {
   if (!window.mqtt) {
     logLine("MQTT library failed to load.", "error");
     return;
@@ -166,7 +163,7 @@ function connectMqtt() {
     clientId: els.clientId.value.trim() || undefined,
     clean: true,
     keepalive: 30,
-    reconnectPeriod: 2000,
+    reconnectPeriod: auto ? 0 : 2000,
     connectTimeout: 5000,
   };
 
@@ -177,9 +174,12 @@ function connectMqtt() {
     state.mqttConnected = true;
     setConnectState("connected");
     logLine("MQTT connected.", "ok");
+    if (auto) {
+      state.mqttClient.options.reconnectPeriod = 2000;
+    }
 
     const base = els.baseTopic.value.trim();
-    if (base && els.subscribeResponses.checked) {
+    if (base) {
       const responseTopic = `${base}/bridge/response/action`;
       state.mqttClient.subscribe(responseTopic, (err) => {
         if (err) {
@@ -879,7 +879,6 @@ function init() {
     els.mqttUser,
     els.mqttPass,
     els.baseTopic,
-    els.subscribeResponses,
     els.autoConnect,
     els.clientId,
     els.extendedPanId,
@@ -891,8 +890,8 @@ function init() {
   setCameraControlsEnabled(false);
   setConnectState("idle");
 
-  if (els.autoConnect.checked) {
-    connectMqtt();
+  if (els.autoConnect.checked && state.hasStoredMqttUrl) {
+    connectMqtt({ auto: true });
   }
 }
 
