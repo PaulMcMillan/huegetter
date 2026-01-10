@@ -2,6 +2,8 @@
 
 Static site that scans Hue bulb QR codes, derives the printed 6‑char serial from the `Z:` field, and sends the Zigbee2MQTT factory reset action over WebSocket MQTT.
 
+**Live site:** https://paulmcmillan.github.io/huegetter/
+
 ## Run locally
 
 ```bash
