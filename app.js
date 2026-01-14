@@ -7,7 +7,7 @@ import {
 import QrScanner from "https://unpkg.com/qr-scanner@1.4.2/qr-scanner.min.js";
 
 const PERSIST_KEY = "hue-reset-settings";
-const PERMIT_JOIN_SECONDS = 60;
+const PERMIT_JOIN_SECONDS = 120;
 const REJOIN_TIMEOUT_MS = 120000;
 const DEFAULTS = {
   mqttUrl: "ws://localhost:9001",
