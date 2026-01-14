@@ -7,6 +7,8 @@ import {
 import QrScanner from "https://unpkg.com/qr-scanner@1.4.2/qr-scanner.min.js";
 
 const PERSIST_KEY = "hue-reset-settings";
+const PERMIT_JOIN_SECONDS = 60;
+const REJOIN_TIMEOUT_MS = 120000;
 const DEFAULTS = {
   mqttUrl: "ws://localhost:9001",
   username: "",
@@ -65,6 +67,8 @@ const state = {
   virtualZoom: 1,
   autoCamera: true,
   hasStoredMqttUrl: false,
+  pendingRejoin: null,
+  pendingRejoinTimer: null,
 };
 
 function logLine(message, level = "info") {
@@ -97,6 +101,10 @@ function setConnectState(state) {
       button.textContent = "Connect";
       button.disabled = false;
   }
+}
+
+function getBaseTopic() {
+  return els.baseTopic.value.trim() || DEFAULTS.baseTopic;
 }
 
 function focusScanSection() {
@@ -177,9 +185,13 @@ function connectMqtt({ auto = false } = {}) {
       state.mqttClient.options.reconnectPeriod = 2000;
     }
 
-    const base = els.baseTopic.value.trim();
-    if (base) {
-      const responseTopic = `${base}/bridge/response/action`;
+    const base = getBaseTopic();
+    const responseTopics = [
+      `${base}/bridge/response/action`,
+      `${base}/bridge/response/permit_join`,
+      `${base}/bridge/event`,
+    ];
+    responseTopics.forEach((responseTopic) => {
       state.mqttClient.subscribe(responseTopic, (err) => {
         if (err) {
           logLine(`Subscribe failed: ${err.message}`, "error");
@@ -187,7 +199,7 @@ function connectMqtt({ auto = false } = {}) {
           logLine(`Subscribed to ${responseTopic}`, "ok");
         }
       });
-    }
+    });
 
     focusScanSection();
     if (!state.scanning && state.autoCamera) {
@@ -227,15 +239,125 @@ function connectMqtt({ auto = false } = {}) {
   });
 
   state.mqttClient.on("message", (topic, payload) => {
+    const text = payload.toString();
+    if (topic.endsWith("/bridge/event")) {
+      handleBridgeEvent(topic, text);
+      return;
+    }
+
     try {
-      const message = JSON.parse(payload.toString());
+      const message = JSON.parse(text);
       logLine(`Response on ${topic}: ${JSON.stringify(message)}`, "ok");
     } catch (err) {
-      logLine(`Response on ${topic}: ${payload.toString()}`, "ok");
+      logLine(`Response on ${topic}: ${text}`, "ok");
     }
   });
 
   saveSettings();
+}
+
+function clearPendingRejoin() {
+  if (state.pendingRejoinTimer) {
+    clearTimeout(state.pendingRejoinTimer);
+    state.pendingRejoinTimer = null;
+  }
+  state.pendingRejoin = null;
+}
+
+function startRejoinWatch(serial, source) {
+  if (!serial) return;
+  if (state.pendingRejoin?.serial) {
+    logLine(`Replacing rejoin watch for ${state.pendingRejoin.serial} with ${serial}.`, "warn");
+  }
+  clearPendingRejoin();
+
+  state.pendingRejoin = {
+    serial,
+    source,
+    ieee: null,
+    startedAt: Date.now(),
+  };
+
+  logLine(`Waiting for device_leave/device_joined for serial ${serial}…`, "info");
+
+  state.pendingRejoinTimer = setTimeout(() => {
+    if (!state.pendingRejoin || state.pendingRejoin.serial !== serial) return;
+    logLine(`No device_joined event yet for serial ${serial}.`, "warn");
+  }, REJOIN_TIMEOUT_MS);
+}
+
+function handleBridgeEvent(topic, text) {
+  let message;
+  try {
+    message = JSON.parse(text);
+  } catch (err) {
+    logLine(`Bridge event on ${topic}: ${text}`, "warn");
+    return;
+  }
+
+  if (!message || typeof message !== "object" || !message.type) {
+    logLine(`Bridge event on ${topic}: ${JSON.stringify(message)}`, "warn");
+    return;
+  }
+
+  const type = message.type;
+  if (type === "device_joined" || type === "device_announce" || type === "device_interview") {
+    const data = message.data || {};
+    const friendly = data.friendly_name || "unknown";
+    const ieee = data.ieee_address || "unknown";
+    if (type === "device_interview" && data.status && data.status !== "successful") {
+      logLine(`Device interview ${data.status}: ${friendly} (${ieee}).`, "warn");
+    } else {
+      logLine(`Bridge event ${type}: ${friendly} (${ieee}).`, "ok");
+    }
+
+    if (type === "device_joined") {
+      maybeResolveRejoin(ieee);
+    }
+    return;
+  }
+
+  if (type === "device_leave") {
+    const data = message.data || {};
+    const friendly = data.friendly_name || "unknown";
+    const ieee = data.ieee_address || "unknown";
+    logLine(`Bridge event device_leave: ${friendly} (${ieee}).`, "warn");
+    if (ieee && ieee !== "unknown") {
+      capturePendingIeee(ieee);
+    }
+    return;
+  }
+
+  logLine(`Bridge event ${type}: ${JSON.stringify(message.data ?? {})}`, "ok");
+}
+
+function capturePendingIeee(ieeeAddress) {
+  const pending = state.pendingRejoin;
+  if (!pending) return;
+  if (pending.ieee) return;
+  pending.ieee = ieeeAddress;
+  logLine(`Captured IEEE ${ieeeAddress} for serial ${pending.serial}.`, "info");
+}
+
+function maybeResolveRejoin(ieeeAddress) {
+  const pending = state.pendingRejoin;
+  if (!pending) return;
+
+  if (!pending.ieee) {
+    pending.ieee = ieeeAddress;
+    logLine(`Assuming first join belongs to serial ${pending.serial} (${ieeeAddress}).`, "warn");
+  }
+
+  if (pending.ieee && pending.ieee !== ieeeAddress) {
+    logLine(`Device joined ${ieeeAddress} but expected ${pending.ieee}.`, "warn");
+    return;
+  }
+
+  logLine(
+    `Rejoin detected for serial ${pending.serial}: ${ieeeAddress}.`,
+    "ok"
+  );
+  clearPendingRejoin();
 }
 
 function disconnectMqtt() {
@@ -254,13 +376,38 @@ function canSendSerial(serial) {
   return true;
 }
 
+function publishPermitJoin(durationSeconds, source) {
+  if (!state.mqttConnected || !state.mqttClient) {
+    logLine(`Serial detected from ${source}, but MQTT is not connected.`, "warn");
+    return Promise.resolve(false);
+  }
+
+  const base = getBaseTopic();
+  const topic = `${base}/bridge/request/permit_join`;
+  const payload = { time: durationSeconds };
+
+  logLine(`Opening Zigbee2MQTT permit join for ${durationSeconds}s…`, "info");
+
+  return new Promise((resolve) => {
+    state.mqttClient.publish(topic, JSON.stringify(payload), (err) => {
+      if (err) {
+        logLine(`Failed to open permit join: ${err.message}`, "error");
+        resolve(false);
+      } else {
+        logLine(`Permit join enabled for ${durationSeconds}s (${source}).`, "ok");
+        resolve(true);
+      }
+    });
+  });
+}
+
 function publishReset(serial, source) {
   if (!state.mqttConnected || !state.mqttClient) {
     logLine(`Serial ${serial} detected from ${source}, but MQTT is not connected.`, "warn");
-    return;
+    return Promise.resolve(false);
   }
 
-  const base = els.baseTopic.value.trim() || DEFAULTS.baseTopic;
+  const base = getBaseTopic();
   const topic = `${base}/bridge/request/action`;
   const payload = {
     action: "philips_hue_factory_reset",
@@ -274,13 +421,35 @@ function publishReset(serial, source) {
     payload.params.extended_pan_id = panId;
   }
 
-  state.mqttClient.publish(topic, JSON.stringify(payload), (err) => {
-    if (err) {
-      logLine(`Failed to publish reset: ${err.message}`, "error");
-    } else {
-      logLine(`Reset sent for serial ${serial} (${source}).`, "ok");
-    }
+  return new Promise((resolve) => {
+    state.mqttClient.publish(topic, JSON.stringify(payload), (err) => {
+      if (err) {
+        logLine(`Failed to publish reset: ${err.message}`, "error");
+        resolve(false);
+      } else {
+        logLine(`Reset sent for serial ${serial} (${source}).`, "ok");
+        resolve(true);
+      }
+    });
   });
+}
+
+async function sendResetWithJoin(serial, source) {
+  if (!state.mqttConnected || !state.mqttClient) {
+    logLine(`Serial ${serial} detected from ${source}, but MQTT is not connected.`, "warn");
+    return;
+  }
+
+  const permitJoinOk = await publishPermitJoin(PERMIT_JOIN_SECONDS, source);
+  if (!permitJoinOk) {
+    logLine(`Skipping reset for serial ${serial} (${source}) because permit join failed.`, "warn");
+    return;
+  }
+
+  const resetOk = await publishReset(serial, source);
+  if (resetOk) {
+    startRejoinWatch(serial, source);
+  }
 }
 
 function handleSerial(serial, source) {
@@ -300,7 +469,7 @@ function handleSerial(serial, source) {
   state.lastSerial = normalized;
   state.lastSentAt = Date.now();
   void beep();
-  publishReset(normalized, source);
+  void sendResetWithJoin(normalized, source);
 }
 
 function getScanRegion(video) {

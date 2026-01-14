@@ -17,6 +17,8 @@ Open `http://localhost:5173` in a modern browser. Camera access works on localho
 - Base topic defaults to `zigbee2mqtt`.
 - WebSocket URL defaults to `ws://localhost:9001` (update to match your Mosquitto WebSocket listener).
 - Auto-connect is enabled by default (toggle in the UI).
+- The app opens Zigbee2MQTT permit-join for 60 seconds before every reset.
+- The app listens for `bridge/event` and flags rejoin based on IEEE address.
 
 ## Tests
 
