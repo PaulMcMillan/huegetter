@@ -9,6 +9,7 @@ import QrScanner from "https://unpkg.com/qr-scanner@1.4.2/qr-scanner.min.js";
 const PERSIST_KEY = "hue-reset-settings";
 const PERMIT_JOIN_SECONDS = 120;
 const REJOIN_TIMEOUT_MS = 120000;
+const ACTION_TIMEOUT_MS = 40000;
 const DEFAULTS = {
   mqttUrl: "ws://localhost:9001",
   username: "",
@@ -69,6 +70,8 @@ const state = {
   hasStoredMqttUrl: false,
   pendingRejoin: null,
   pendingRejoinTimer: null,
+  pendingAction: null,
+  pendingActionTimer: null,
 };
 
 function logLine(message, level = "info") {
@@ -245,10 +248,20 @@ function connectMqtt({ auto = false } = {}) {
       return;
     }
 
+    let message;
     try {
-      const message = JSON.parse(text);
-      logLine(`Response on ${topic}: ${JSON.stringify(message)}`, "ok");
+      message = JSON.parse(text);
     } catch (err) {
+      message = null;
+    }
+
+    if (topic.endsWith("/bridge/response/action") && message) {
+      maybeResolveActionResponse(message);
+    }
+
+    if (message) {
+      logLine(`Response on ${topic}: ${JSON.stringify(message)}`, "ok");
+    } else {
       logLine(`Response on ${topic}: ${text}`, "ok");
     }
   });
@@ -262,6 +275,49 @@ function clearPendingRejoin() {
     state.pendingRejoinTimer = null;
   }
   state.pendingRejoin = null;
+}
+
+function clearPendingAction() {
+  if (state.pendingActionTimer) {
+    clearTimeout(state.pendingActionTimer);
+    state.pendingActionTimer = null;
+  }
+  state.pendingAction = null;
+}
+
+function waitForActionResponse(transaction, timeoutMs = ACTION_TIMEOUT_MS) {
+  if (!transaction) {
+    return Promise.resolve({ ok: false, reason: "missing-transaction" });
+  }
+  if (state.pendingAction) {
+    logLine("Replacing pending action response wait.", "warn");
+  }
+  clearPendingAction();
+
+  return new Promise((resolve) => {
+    state.pendingAction = { transaction, resolve };
+    state.pendingActionTimer = setTimeout(() => {
+      clearPendingAction();
+      resolve({ ok: false, reason: "timeout" });
+    }, timeoutMs);
+  });
+}
+
+function maybeResolveActionResponse(message) {
+  const pending = state.pendingAction;
+  if (!pending) return;
+  if (!message || typeof message !== "object") return;
+  if (message.transaction && message.transaction !== pending.transaction) {
+    return;
+  }
+
+  clearPendingAction();
+
+  const ok = message.status !== "error";
+  if (!ok) {
+    logLine(`Reset action failed: ${message.error || "unknown error"}.`, "error");
+  }
+  pending.resolve({ ok, message });
 }
 
 function startRejoinWatch(serial, source) {
@@ -366,6 +422,7 @@ function disconnectMqtt() {
   state.mqttClient = null;
   state.mqttConnected = false;
   setConnectState("idle");
+  clearPendingAction();
 }
 
 function canSendSerial(serial) {
@@ -404,16 +461,18 @@ function publishPermitJoin(durationSeconds, source) {
 function publishReset(serial, source) {
   if (!state.mqttConnected || !state.mqttClient) {
     logLine(`Serial ${serial} detected from ${source}, but MQTT is not connected.`, "warn");
-    return Promise.resolve(false);
+    return Promise.resolve(null);
   }
 
   const base = getBaseTopic();
   const topic = `${base}/bridge/request/action`;
+  const transaction = `reset-${Date.now().toString(16)}-${Math.random().toString(16).slice(2, 8)}`;
   const payload = {
     action: "philips_hue_factory_reset",
     params: {
       serial_numbers: [serial],
     },
+    transaction,
   };
 
   const panId = els.extendedPanId.value.trim();
@@ -425,10 +484,10 @@ function publishReset(serial, source) {
     state.mqttClient.publish(topic, JSON.stringify(payload), (err) => {
       if (err) {
         logLine(`Failed to publish reset: ${err.message}`, "error");
-        resolve(false);
+        resolve(null);
       } else {
-        logLine(`Reset sent for serial ${serial} (${source}).`, "ok");
-        resolve(true);
+        logLine(`Reset request sent for serial ${serial} (${source}).`, "ok");
+        resolve(transaction);
       }
     });
   });
@@ -440,16 +499,26 @@ async function sendResetWithJoin(serial, source) {
     return;
   }
 
-  const permitJoinOk = await publishPermitJoin(PERMIT_JOIN_SECONDS, source);
-  if (!permitJoinOk) {
-    logLine(`Skipping reset for serial ${serial} (${source}) because permit join failed.`, "warn");
+  const transaction = await publishReset(serial, source);
+  if (!transaction) {
     return;
   }
 
-  const resetOk = await publishReset(serial, source);
-  if (resetOk) {
-    startRejoinWatch(serial, source);
+  logLine("Waiting for reset to complete and interPAN channel restore…", "info");
+  const actionResult = await waitForActionResponse(transaction);
+  if (!actionResult.ok) {
+    const reason = actionResult.reason ? ` (${actionResult.reason})` : "";
+    logLine(`Reset did not complete; skipping permit join${reason}.`, "warn");
+    return;
   }
+
+  const permitJoinOk = await publishPermitJoin(PERMIT_JOIN_SECONDS, source);
+  if (!permitJoinOk) {
+    logLine(`Permit join failed after reset for serial ${serial} (${source}).`, "warn");
+    return;
+  }
+
+  startRejoinWatch(serial, source);
 }
 
 function handleSerial(serial, source) {
